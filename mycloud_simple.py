@@ -32,6 +32,85 @@ from selenium.common.exceptions import StaleElementReferenceException
 # Load environment variables from .env
 load_dotenv()
 
+def extract_video_details(driver, fig, wait=15):
+    details = {}
+
+    # Scroll into view and click thumbnail
+    driver.execute_script("arguments[0].scrollIntoView(true);", fig)
+    time.sleep(0.5)
+    img = fig.find_element(By.CSS_SELECTOR, "img")
+    driver.execute_script("arguments[0].click();", img)
+
+    # Wait for preview container and get video URL (poster or <video> src)
+    preview_div = WebDriverWait(driver, wait).until(
+        EC.presence_of_element_located((By.CSS_SELECTOR, "div.mono-preview-content-image-preview-container"))
+    )
+    try:
+        video_el = preview_div.find_element(By.CSS_SELECTOR, "video")
+        details["url"] = video_el.get_attribute("src")
+    except:
+        try:
+            poster_el = preview_div.find_element(By.CSS_SELECTOR, "img")
+            details["url"] = poster_el.get_attribute("src")
+        except:
+            details["url"] = None
+
+    # Click info icon if present
+    try:
+        info_icon = WebDriverWait(driver, 5).until(
+            EC.element_to_be_clickable((By.CSS_SELECTOR, ".pi-preview-icon-information"))
+        )
+        driver.execute_script("arguments[0].click();", info_icon)
+        time.sleep(0.5)
+    except:
+        pass
+
+    # Metadata fields (gracefully handle missing ones)
+    try:
+        details["date"] = driver.find_element(
+            By.CSS_SELECTOR, "div.pi-information-row span.max-width"
+        ).text
+    except:
+        details["date"] = None
+    try:
+        details["time"] = driver.find_element(
+            By.CSS_SELECTOR, "div.pi-information-row .edit-subtitle span"
+        ).text
+    except:
+        details["time"] = None
+    try:
+        details["location"] = driver.find_element(
+            By.CSS_SELECTOR, "div.pi-information-row[title]"
+        ).get_attribute("title")
+    except:
+        details["location"] = None
+    try:
+        details["filename"] = driver.find_element(
+            By.CSS_SELECTOR, "div.pi-information-row[title] span.max-width"
+        ).text
+    except:
+        details["filename"] = None
+    try:
+        # Video-specific metadata: resolution, format, duration
+        subtitle = driver.find_element(
+            By.CSS_SELECTOR, "div.pi-information-row .edit-subtitle span"
+        ).text
+        details["metadata"] = subtitle
+    except:
+        details["metadata"] = None
+
+    # Click Back to return to grid
+    try:
+        back_btn = WebDriverWait(driver, wait).until(
+            EC.element_to_be_clickable((By.CSS_SELECTOR, ".pi-preview-back-text"))
+        )
+        driver.execute_script("arguments[0].click();", back_btn)
+        time.sleep(0.5)
+    except:
+        pass
+
+    return details
+
 def extract_photo_details(driver, fig, wait=15):
     details = {}
 
@@ -111,7 +190,7 @@ def scroll_until_no_new(driver, pause=2):
         else:
             break
 
-def get_images(driver, out_csv="photos.csv", pause=1.5, max_scrolls=5000):
+def get_images(driver, out_csv="photos.csv", outvid_csv="videos.csv", pause=1.5, max_scrolls=5000):
     """
     Crawl the Swisscom gallery, extract photo metadata, and export to CSV.
     - Handles infinite/virtualized scrolling
@@ -125,7 +204,7 @@ def get_images(driver, out_csv="photos.csv", pause=1.5, max_scrolls=5000):
         EC.presence_of_element_located((By.CSS_SELECTOR, "figure.pi-figure img"))
     )
 
-    photos, seen = [], set()
+    photos, seen, videos = [], set(), []
     scrolls_without_new, scroll_count = 0, 0
 
     # Identify the scrollable container (adjust selector if needed)
@@ -138,6 +217,7 @@ def get_images(driver, out_csv="photos.csv", pause=1.5, max_scrolls=5000):
         # Always re‑query fresh thumbnails
         thumbs = driver.find_elements(By.CSS_SELECTOR, "figure.pi-figure img")
         new_found = 0
+        newvideo_found = 0
 
         try:
             for img in thumbs:
@@ -152,7 +232,16 @@ def get_images(driver, out_csv="photos.csv", pause=1.5, max_scrolls=5000):
                 # ⬇️ NEW: check if this <img> belongs to a video figure
                 fig = img.find_element(By.XPATH, "./ancestor::figure")
                 if fig.find_elements(By.CSS_SELECTOR, ".video"):
-                    print("Skipping video thumbnail")
+                    print("Found video thumbnail")
+                    try:
+                        details = extract_video_details(driver, fig)
+                        if details:
+                            videos.append(details)
+                            newvideo_found += 1
+                            print(f"✓ Collected {len(videos)} videos")
+                    except Exception as e:
+                        print(f"Error extracting details: {e}")
+                        traceback.print_exc()                    
                     continue
 
                 seen.add(thumb_url)
@@ -202,6 +291,14 @@ def get_images(driver, out_csv="photos.csv", pause=1.5, max_scrolls=5000):
             writer.writeheader()
             writer.writerows(photos)
         print(f"Exported {len(photos)} photos to {out_csv}")
+
+    if videos:
+        keys = sorted({k for d in videos for k in d.keys()})
+        with open(outvid_csv, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=keys)
+            writer.writeheader()
+            writer.writerows(videos)
+        print(f"Exported {len(videos)} videos to {outvid_csv}")
 
     return photos
 
