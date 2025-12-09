@@ -11,6 +11,7 @@ Usage:
 
 import os
 import time
+import traceback
 from dotenv import load_dotenv
 from selenium import webdriver
 from selenium.webdriver.common.by import By
@@ -173,6 +174,7 @@ def get_images(driver, out_csv="photos.csv", pause=1.5, max_scrolls=5000):
                         print(f"✓ Collected {len(photos)} photos")
                 except Exception as e:
                     print(f"Error extracting details: {e}")
+                    traceback.print_exc()
 
             if new_found == 0:
                 scrolls_without_new += 1
@@ -190,6 +192,7 @@ def get_images(driver, out_csv="photos.csv", pause=1.5, max_scrolls=5000):
             time.sleep(pause)
         except Exception as e:
             print(f"Scrolling error: {e}")
+            traceback.print_exc()
             break
     # Export to CSV
     if photos:
@@ -231,6 +234,7 @@ def get_mycloud_data(username=None, password=None, headless=False):
     chrome_options.add_argument('--no-sandbox')
     chrome_options.add_argument('--disable-dev-shm-usage')
     chrome_options.add_argument('--window-size=1920,1080')
+    # chrome_options.add_argument('--headless=new') --- it does not logn into it
     
     # Selenium-wire options for intercepting network traffic
     seleniumwire_options = {
@@ -368,9 +372,13 @@ def get_mycloud_data(username=None, password=None, headless=False):
         driver.get('https://www.mycloud.swisscom.ch/#photos')
         time.sleep(4)
         
-        get_images(driver)
-        if(True):
-            exit(0)
+        try:
+            get_images(driver)
+            if(True):
+                exit(0)
+        except Exception as e:
+            print(f"Error getting images: {e}")
+            traceback.print_exc()
 
         # Extract bearer token from network requests
         print("Extracting bearer token...")
@@ -409,6 +417,7 @@ def get_mycloud_data(username=None, password=None, headless=False):
         
     except Exception as e:
         print(f"\n✗ Error: {e}")
+        traceback.print_exc()
         try:
             driver.save_screenshot('./claude/login_error.png')
             print("Screenshot saved: ./claude/login_error.png")
@@ -418,39 +427,6 @@ def get_mycloud_data(username=None, password=None, headless=False):
         driver.quit()
     
     return bearer_token
-
-
-def test_bearer_token(token):
-    """Test if bearer token works by making an API call"""
-    headers = {
-        'Authorization': token,
-        'User-Agent': 'Mozilla/5.0',
-        'Accept': 'application/json',
-    }
-    
-    print("\nTesting bearer token...")
-    try:
-        response = requests.get(
-            'https://storage.prod.mdl.swisscom.ch/api/MetaObjectControllerV2/MetaObjects',
-            headers=headers,
-            timeout=10
-        )
-        
-        print(f"API Response: {response.status_code}")
-        
-        if response.status_code == 200:
-            print("✓ Token is valid and working!")
-            return True
-        elif response.status_code == 401:
-            print("✗ Token is invalid or expired")
-            return False
-        else:
-            print(f"⚠ Unexpected response: {response.status_code}")
-            return False
-            
-    except Exception as e:
-        print(f"API test error: {e}")
-        return False
 
 
 def main():
